@@ -108,6 +108,18 @@ runs:
       if: ${{ inputs.checkout-repository == 'true' }}
       uses: actions/checkout@v4
 
+    - name: Link .claude to .codex
+      shell: bash
+      run: |
+        if [ -d ".claude" ] && [ ! -e ".codex" ]; then
+          ln -s .claude .codex
+          echo "Linked .claude -> .codex"
+        elif [ -d ".codex" ]; then
+          echo ".codex already exists, skipping"
+        else
+          echo "No .claude or .codex directory found"
+        fi
+
     - name: Determine issue number
       id: issue_number
       shell: bash
