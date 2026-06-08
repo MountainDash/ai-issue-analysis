@@ -47,7 +47,6 @@
 - `codex-api-key`: Codex CLI 使用的 API Key（会设为 `OPENAI_API_KEY` 环境变量），支持传多个 key，每行一个，action 会随机选择一个使用
 - `codex-base-url`: API 端点 base URL（会设为 `OPENAI_BASE_URL` 环境变量），留空则使用 OpenAI 默认端点
 - `codex-model`: 模型名称，默认 `o3`
-- `codex-reasoning-effort`: 推理深度，默认 `high`（可选 `low`、`medium`、`high`）
 - `codex-package`: 安装的 npm 包名，默认 `@openai/codex`
 - `bot-name`: 从 `issue_comment` 正文中剥离掉的 bot mention，比如 `@YourBot`
 - `initial-comment-body`: 开始分析时先发出的评论正文

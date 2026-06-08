@@ -21,10 +21,6 @@ inputs:
     description: Model name passed to the Codex CLI via --model.
     required: false
     default: gpt-5.5
-  codex-reasoning-effort:
-    description: Reasoning effort level passed to the Codex CLI via --reasoning-effort (low, medium, high).
-    required: false
-    default: high
   codex-package:
     description: NPM package to install for the Codex CLI.
     required: false
@@ -281,7 +277,6 @@ runs:
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
         DETAILS_END: ${{ steps.runtime.outputs.details_end }}
         CODEX_MODEL: ${{ inputs.codex-model }}
-        CODEX_REASONING_EFFORT: ${{ inputs.codex-reasoning-effort }}
         STREAM_UPDATE_INTERVAL: ${{ inputs.stream-update-interval-seconds }}
         EXTRA_COMMENT_CONTENT: ${{ inputs.extra-comment-content }}
       run: |
@@ -296,21 +291,19 @@ runs:
           echo "  comment-id: $COMMENT_ID"
           echo "  comment-url: $COMMENT_URL"
           echo "  model: $CODEX_MODEL"
-          echo "  reasoning-effort: $CODEX_REASONING_EFFORT"
           echo "  base-url: ${OPENAI_BASE_URL:-(default)}"
           echo "  api-key-count: ${{ steps.resolve_codex_key.outputs.codex_key_count }}"
           echo "  stream-update-interval-seconds: $STREAM_UPDATE_INTERVAL"
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  command: codex exec --model \"$CODEX_MODEL\" --reasoning-effort \"$CODEX_REASONING_EFFORT\" --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  command: codex exec --model \"$CODEX_MODEL\" --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --model "$CODEX_MODEL" --reasoning-effort "$CODEX_REASONING_EFFORT" \
-          --full-auto \
+        codex exec --model "$CODEX_MODEL" --full-auto \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
         CODEX_PID=$!
         echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
@@ -365,6 +358,7 @@ runs:
         done
 
         wait "$CODEX_PID"
+        CODEX_EXIT=$?
 
         {
           echo
@@ -374,7 +368,10 @@ runs:
           fi
           echo
           echo "Codex output ends"
+          echo "Codex exit code: $CODEX_EXIT"
         } >> "$EXECUTION_LOG_FILE"
+
+        exit "$CODEX_EXIT"
 
     - name: Full analysis
       if: ${{ always() }}

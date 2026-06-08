@@ -37,7 +37,6 @@ jobs:
           bot-name: "@github-actions"
           github-token: ${{ secrets.GITHUB_TOKEN }}
           codex-model: deepseek-v4-pro
-          codex-reasoning-effort: high
 
       - name: 查看完整输入输出
         if: always()
