@@ -235,15 +235,18 @@ runs:
       shell: bash
       run: npm install -g "${{ inputs.codex-package }}"
 
-    - name: Resolve Codex API key
+    - name: Resolve Codex API key and configure Codex CLI
       id: resolve_codex_key
       shell: bash
       env:
         INPUT_CODEX_API_KEY: ${{ inputs.codex-api-key }}
+        INPUT_CODEX_BASE_URL: ${{ inputs.codex-base-url }}
+        INPUT_CODEX_MODEL: ${{ inputs.codex-model }}
       run: |
         python <<'PY'
         import os
         import secrets
+        from pathlib import Path
 
         raw_value = os.environ["INPUT_CODEX_API_KEY"]
         keys = [line.strip() for line in raw_value.splitlines() if line.strip()]
@@ -253,6 +256,28 @@ runs:
 
         selected_key = secrets.choice(keys)
 
+        base_url = os.environ["INPUT_CODEX_BASE_URL"].strip()
+        model = os.environ["INPUT_CODEX_MODEL"].strip()
+
+        codex_home = Path.home() / ".codex"
+        codex_home.mkdir(parents=True, exist_ok=True)
+        config_path = codex_home / "config.toml"
+
+        lines = [f'model = "{model}"']
+        if base_url:
+            lines.append("")
+            lines.append("[model_providers.custom]")
+            lines.append(f'name = "Custom Provider"')
+            lines.append(f'base_url = "{base_url}"')
+            lines.append(f'env_key = "CODEX_API_KEY"')
+            lines.append(f'wire_api = "chat"')
+            lines.append("")
+            lines.append('model_provider = "custom"')
+
+        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        print(f"Codex config written to {config_path}:")
+        print(config_path.read_text(encoding="utf-8"))
+
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
             fh.write(f"codex_api_key={selected_key}\n")
             fh.write(f"codex_key_count={len(keys)}\n")
@@ -261,8 +286,7 @@ runs:
     - name: Run Codex analysis with streaming updates
       shell: bash
       env:
-        OPENAI_API_KEY: ${{ steps.resolve_codex_key.outputs.codex_api_key }}
-        OPENAI_BASE_URL: ${{ inputs.codex-base-url }}
+        CODEX_API_KEY: ${{ steps.resolve_codex_key.outputs.codex_api_key }}
         COMMENT_GITHUB_TOKEN: ${{ inputs.github-token }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         COMMENT_ID: ${{ steps.initial_comment.outputs.comment-id }}
@@ -291,19 +315,20 @@ runs:
           echo "  comment-id: $COMMENT_ID"
           echo "  comment-url: $COMMENT_URL"
           echo "  model: $CODEX_MODEL"
-          echo "  base-url: ${OPENAI_BASE_URL:-(default)}"
           echo "  api-key-count: ${{ steps.resolve_codex_key.outputs.codex_key_count }}"
           echo "  stream-update-interval-seconds: $STREAM_UPDATE_INTERVAL"
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  command: codex exec --model \"$CODEX_MODEL\" --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  codex config:"
+          cat ~/.codex/config.toml
+          echo "  command: codex exec --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --model "$CODEX_MODEL" --full-auto \
+        codex exec --full-auto \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
         CODEX_PID=$!
         echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
