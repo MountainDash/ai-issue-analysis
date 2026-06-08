@@ -1,5 +1,5 @@
 name: AI Issue Analysis
-description: Analyze a GitHub issue with Copilot CLI and keep a comment updated with progress and the final result.
+description: Analyze a GitHub issue with Codex CLI and keep a comment updated with progress and the final result.
 author: MistEO
 
 inputs:
@@ -10,9 +10,25 @@ inputs:
   github-token:
     description: GitHub token used to create and update issue comments.
     required: true
-  copilot-github-token:
-    description: Fine-grained GitHub token with Copilot access for the Copilot CLI. Supports multiple tokens, one per line, and randomly picks one.
+  codex-api-key:
+    description: API key for the Codex CLI (set as OPENAI_API_KEY). Supports multiple keys, one per line, and randomly picks one.
     required: true
+  codex-base-url:
+    description: Base URL for the Codex CLI API endpoint (set as OPENAI_BASE_URL). Leave empty to use the default OpenAI endpoint.
+    required: false
+    default: ""
+  codex-model:
+    description: Model name passed to the Codex CLI via --model.
+    required: false
+    default: gpt-5.5
+  codex-reasoning-effort:
+    description: Reasoning effort level passed to the Codex CLI via --reasoning-effort (low, medium, high).
+    required: false
+    default: high
+  codex-package:
+    description: NPM package to install for the Codex CLI.
+    required: false
+    default: "@openai/codex"
   bot-name:
     description: Bot mention to strip from issue_comment messages before appending extra requirements.
     required: false
@@ -33,21 +49,13 @@ inputs:
     required: false
     default: 点击此处展开分析过程
   prompt-template:
-    description: Base prompt template. Supported placeholders are {{issue_number}}, {{copilot_answer_file}}, {{repository}}, and {{event_name}}.
+    description: Base prompt template. Supported placeholders are {{issue_number}}, {{answer_file}}, {{repository}}, and {{event_name}}.
     required: false
-    default: 分析 GitHub Issue {{issue_number}}。把最终结论写到 {{copilot_answer_file}}。
+    default: 分析 GitHub Issue {{issue_number}}。把最终结论写到 {{answer_file}}。
   comment-prompt-template:
     description: Extra prompt appended when the triggering issue comment still has content after removing the bot mention. Supported placeholders also include {{comment_body}}.
     required: false
     default: 补充要求：{{comment_body}}
-  copilot-model:
-    description: Copilot CLI model name.
-    required: false
-    default: gpt-5.4
-  copilot-reasoning-effort:
-    description: Copilot CLI reasoning effort.
-    required: false
-    default: xhigh
   stream-update-interval-seconds:
     description: Number of seconds between streamed comment updates.
     required: false
@@ -56,24 +64,20 @@ inputs:
     description: Directory used for temporary prompt, output, and comment files.
     required: false
     default: .cache
-  copilot-answer-file:
-    description: File path where the prompt asks Copilot to write the final answer.
+  answer-file:
+    description: File path where the prompt asks the AI to write the final answer.
     required: false
-    default: copilot_answer.md
-  copilot-package:
-    description: NPM package to install for the Copilot CLI.
-    required: false
-    default: "@github/copilot"
+    default: answer.md
   checkout-repository:
     description: Whether to run actions/checkout inside the action before analysis.
     required: false
     default: "true"
   process-error-message:
-    description: Fallback message shown in the full analysis log when the Copilot answer file is not found.
+    description: Fallback message shown in the full analysis log when the answer file is not found.
     required: false
     default: 分析过程出现错误，请重试。
   result-error-message:
-    description: Fallback message written into the final issue comment when the Copilot answer file is not found.
+    description: Fallback message written into the final issue comment when the answer file is not found.
     required: false
     default: 分析结果出现错误，请重试。
   extra-comment-content:
@@ -92,13 +96,13 @@ outputs:
     description: The URL of the issue comment that was created and then updated.
     value: ${{ steps.export_results.outputs.comment-url }}
   analysis-prompt:
-    description: Final rendered prompt passed to Copilot for this run.
+    description: Final rendered prompt passed to Codex for this run.
     value: ${{ steps.export_results.outputs.analysis-prompt }}
-  copilot-output:
-    description: Execution log including pre-run parameters, prompt, and Copilot stdout and stderr.
-    value: ${{ steps.export_results.outputs.copilot-output }}
+  codex-output:
+    description: Execution log including pre-run parameters, prompt, and Codex stdout and stderr.
+    value: ${{ steps.export_results.outputs.codex-output }}
   final-conclusion:
-    description: Final conclusion content produced by Copilot.
+    description: Final conclusion content produced by Codex.
     value: ${{ steps.export_results.outputs.final-conclusion }}
 
 runs:
@@ -149,9 +153,9 @@ runs:
 
         {
           echo "analysis_prompt_file=$CACHE_DIR/analysis_prompt.txt"
-          echo "copilot_output_file=$CACHE_DIR/copilot_output.log"
-          echo "copilot_execution_log_file=$CACHE_DIR/copilot_execution.log"
-          echo "copilot_output_artifact_file=$CACHE_DIR/copilot_output.txt"
+          echo "codex_output_file=$CACHE_DIR/codex_output.log"
+          echo "codex_execution_log_file=$CACHE_DIR/codex_execution.log"
+          echo "codex_output_artifact_file=$CACHE_DIR/codex_output.txt"
           echo "comment_body_file=$CACHE_DIR/comment_body.txt"
           echo "final_comment_file=$CACHE_DIR/final_comment.md"
           echo "final_conclusion_artifact_file=$CACHE_DIR/final_conclusion.md"
@@ -171,7 +175,7 @@ runs:
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         BOT_NAME: ${{ inputs.bot-name }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        COPILOT_ANSWER_FILE: ${{ inputs.copilot-answer-file }}
+        ANSWER_FILE: ${{ inputs.answer-file }}
         PROMPT_TEMPLATE: ${{ inputs.prompt-template }}
         COMMENT_PROMPT_TEMPLATE: ${{ inputs.comment-prompt-template }}
         REPOSITORY: ${{ github.repository }}
@@ -186,7 +190,7 @@ runs:
         issue_number = os.environ["ISSUE_NUMBER"]
         bot_name = os.environ["BOT_NAME"]
         analysis_prompt_file = Path(os.environ["ANALYSIS_PROMPT_FILE"])
-        copilot_answer_file = os.environ["COPILOT_ANSWER_FILE"]
+        answer_file = os.environ["ANSWER_FILE"]
         prompt_template = os.environ["PROMPT_TEMPLATE"]
         comment_prompt_template = os.environ["COMMENT_PROMPT_TEMPLATE"]
         repository = os.environ["REPOSITORY"]
@@ -205,7 +209,7 @@ runs:
             return (
                 template
                 .replace("{{issue_number}}", issue_number)
-                .replace("{{copilot_answer_file}}", copilot_answer_file)
+                .replace("{{answer_file}}", answer_file)
                 .replace("{{comment_body}}", cleaned_comment)
                 .replace("{{repository}}", repository)
                 .replace("{{event_name}}", event_name)
@@ -231,52 +235,53 @@ runs:
           ---
           ${{ steps.runtime.outputs.action_link }}
 
-    - name: Install Copilot CLI
+    - name: Install Codex CLI
       shell: bash
-      run: npm install -g "${{ inputs.copilot-package }}"
+      run: npm install -g "${{ inputs.codex-package }}"
 
-    - name: Resolve Copilot token
-      id: resolve_copilot_token
+    - name: Resolve Codex API key
+      id: resolve_codex_key
       shell: bash
       env:
-        INPUT_COPILOT_GITHUB_TOKEN: ${{ inputs.copilot-github-token }}
+        INPUT_CODEX_API_KEY: ${{ inputs.codex-api-key }}
       run: |
         python <<'PY'
         import os
         import secrets
 
-        raw_value = os.environ["INPUT_COPILOT_GITHUB_TOKEN"]
-        tokens = [line.strip() for line in raw_value.splitlines() if line.strip()]
+        raw_value = os.environ["INPUT_CODEX_API_KEY"]
+        keys = [line.strip() for line in raw_value.splitlines() if line.strip()]
 
-        if not tokens:
-            raise SystemExit("Input copilot-github-token is empty after trimming blank lines.")
+        if not keys:
+            raise SystemExit("Input codex-api-key is empty after trimming blank lines.")
 
-        selected_token = secrets.choice(tokens)
+        selected_key = secrets.choice(keys)
 
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-            fh.write(f"copilot_token={selected_token}\n")
-            fh.write(f"copilot_token_count={len(tokens)}\n")
+            fh.write(f"codex_api_key={selected_key}\n")
+            fh.write(f"codex_key_count={len(keys)}\n")
         PY
 
-    - name: Run Copilot analysis with streaming updates
+    - name: Run Codex analysis with streaming updates
       shell: bash
       env:
-        COPILOT_GITHUB_TOKEN: ${{ steps.resolve_copilot_token.outputs.copilot_token }}
+        OPENAI_API_KEY: ${{ steps.resolve_codex_key.outputs.codex_api_key }}
+        OPENAI_BASE_URL: ${{ inputs.codex-base-url }}
         COMMENT_GITHUB_TOKEN: ${{ inputs.github-token }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         COMMENT_ID: ${{ steps.initial_comment.outputs.comment-id }}
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPO: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        OUTPUT_FILE: ${{ steps.runtime.outputs.copilot_output_file }}
-        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.copilot_execution_log_file }}
+        OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
+        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
         BODY_FILE: ${{ steps.runtime.outputs.comment_body_file }}
         INITIAL_BODY: ${{ inputs.initial-comment-body }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
         DETAILS_END: ${{ steps.runtime.outputs.details_end }}
-        COPILOT_MODEL: ${{ inputs.copilot-model }}
-        COPILOT_REASONING_EFFORT: ${{ inputs.copilot-reasoning-effort }}
+        CODEX_MODEL: ${{ inputs.codex-model }}
+        CODEX_REASONING_EFFORT: ${{ inputs.codex-reasoning-effort }}
         STREAM_UPDATE_INTERVAL: ${{ inputs.stream-update-interval-seconds }}
         EXTRA_COMMENT_CONTENT: ${{ inputs.extra-comment-content }}
       run: |
@@ -285,28 +290,30 @@ runs:
         : > "$OUTPUT_FILE"
         : > "$EXECUTION_LOG_FILE"
         {
-          echo "Copilot invocation parameters:"
+          echo "Codex invocation parameters:"
           echo "  repo: $REPO"
           echo "  issue-number: $ISSUE_NUMBER"
           echo "  comment-id: $COMMENT_ID"
           echo "  comment-url: $COMMENT_URL"
-          echo "  model: $COPILOT_MODEL"
-          echo "  reasoning-effort: $COPILOT_REASONING_EFFORT"
-          echo "  copilot-token-count: ${{ steps.resolve_copilot_token.outputs.copilot_token_count }}"
+          echo "  model: $CODEX_MODEL"
+          echo "  reasoning-effort: $CODEX_REASONING_EFFORT"
+          echo "  base-url: ${OPENAI_BASE_URL:-(default)}"
+          echo "  api-key-count: ${{ steps.resolve_codex_key.outputs.codex_key_count }}"
           echo "  stream-update-interval-seconds: $STREAM_UPDATE_INTERVAL"
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  command: copilot --yolo --model \"$COPILOT_MODEL\" --reasoning-effort \"$COPILOT_REASONING_EFFORT\" --prompt \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  command: codex -q --model \"$CODEX_MODEL\" --reasoning-effort \"$CODEX_REASONING_EFFORT\" --approval-mode full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        copilot --yolo --model "$COPILOT_MODEL" --reasoning-effort "$COPILOT_REASONING_EFFORT" \
-          --prompt "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
-        COPILOT_PID=$!
-        echo "Copilot started with PID $COPILOT_PID" | tee -a "$EXECUTION_LOG_FILE"
+        codex -q --model "$CODEX_MODEL" --reasoning-effort "$CODEX_REASONING_EFFORT" \
+          --approval-mode full-auto \
+          "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
+        CODEX_PID=$!
+        echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
 
         last_content=""
 
@@ -314,9 +321,9 @@ runs:
           sleep "$STREAM_UPDATE_INTERVAL" &
           sleep_pid=$!
 
-          wait -n "$COPILOT_PID" "$sleep_pid" 2>/dev/null || true
+          wait -n "$CODEX_PID" "$sleep_pid" 2>/dev/null || true
 
-          if ! kill -0 "$COPILOT_PID" 2>/dev/null; then
+          if ! kill -0 "$CODEX_PID" 2>/dev/null; then
             kill "$sleep_pid" 2>/dev/null || true
             break
           fi
@@ -357,34 +364,34 @@ runs:
           fi
         done
 
-        wait "$COPILOT_PID"
+        wait "$CODEX_PID"
 
         {
           echo
-          echo "Copilot output begins"
+          echo "Codex output begins"
           if [ -f "$OUTPUT_FILE" ]; then
             cat "$OUTPUT_FILE"
           fi
           echo
-          echo "Copilot output ends"
+          echo "Codex output ends"
         } >> "$EXECUTION_LOG_FILE"
 
     - name: Full analysis
       if: ${{ always() }}
       shell: bash
       env:
-        COPILOT_OUTPUT_FILE: ${{ steps.runtime.outputs.copilot_execution_log_file }}
-        COPILOT_ANSWER_FILE: ${{ inputs.copilot-answer-file }}
+        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        ANSWER_FILE: ${{ inputs.answer-file }}
         PROCESS_ERROR_MESSAGE: ${{ inputs.process-error-message }}
       run: |
-        if [ -f "$COPILOT_OUTPUT_FILE" ]; then
-          cat "$COPILOT_OUTPUT_FILE"
+        if [ -f "$CODEX_OUTPUT_FILE" ]; then
+          cat "$CODEX_OUTPUT_FILE"
         fi
         echo
         echo "---"
         echo
-        if [ -f "$COPILOT_ANSWER_FILE" ]; then
-          cat "$COPILOT_ANSWER_FILE"
+        if [ -f "$ANSWER_FILE" ]; then
+          cat "$ANSWER_FILE"
         else
           echo "$PROCESS_ERROR_MESSAGE"
         fi
@@ -393,8 +400,8 @@ runs:
       if: ${{ always() }}
       shell: bash
       env:
-        COPILOT_ANSWER_FILE: ${{ inputs.copilot-answer-file }}
-        COPILOT_OUTPUT_FILE: ${{ steps.runtime.outputs.copilot_output_file }}
+        ANSWER_FILE: ${{ inputs.answer-file }}
+        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
         FINAL_COMMENT_FILE: ${{ steps.runtime.outputs.final_comment_file }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
@@ -404,8 +411,8 @@ runs:
       run: |
         : > "$FINAL_COMMENT_FILE"
 
-        if [ -f "$COPILOT_ANSWER_FILE" ]; then
-          cat "$COPILOT_ANSWER_FILE" >> "$FINAL_COMMENT_FILE"
+        if [ -f "$ANSWER_FILE" ]; then
+          cat "$ANSWER_FILE" >> "$FINAL_COMMENT_FILE"
         else
           echo "$RESULT_ERROR_MESSAGE" >> "$FINAL_COMMENT_FILE"
         fi
@@ -417,8 +424,8 @@ runs:
           echo "$DETAILS_BEGIN"
           echo
           echo '```text'
-          if [ -f "$COPILOT_OUTPUT_FILE" ]; then
-            cat "$COPILOT_OUTPUT_FILE"
+          if [ -f "$CODEX_OUTPUT_FILE" ]; then
+            cat "$CODEX_OUTPUT_FILE"
           fi
           echo '```'
           echo
@@ -441,9 +448,9 @@ runs:
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPOSITORY: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        COPILOT_OUTPUT_FILE: ${{ steps.runtime.outputs.copilot_execution_log_file }}
-        COPILOT_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.copilot_output_artifact_file }}
-        COPILOT_ANSWER_FILE: ${{ inputs.copilot-answer-file }}
+        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        CODEX_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.codex_output_artifact_file }}
+        ANSWER_FILE: ${{ inputs.answer-file }}
         FINAL_CONCLUSION_ARTIFACT_FILE: ${{ steps.runtime.outputs.final_conclusion_artifact_file }}
       run: |
         python <<'PY'
@@ -457,9 +464,9 @@ runs:
         issue_number = os.environ["ISSUE_NUMBER"]
         repository = os.environ["REPOSITORY"]
         analysis_prompt_file = Path(os.environ["ANALYSIS_PROMPT_FILE"])
-        copilot_output_file = Path(os.environ["COPILOT_OUTPUT_FILE"])
-        copilot_output_artifact_file = Path(os.environ["COPILOT_OUTPUT_ARTIFACT_FILE"])
-        copilot_answer_file = Path(os.environ["COPILOT_ANSWER_FILE"])
+        codex_output_file = Path(os.environ["CODEX_OUTPUT_FILE"])
+        codex_output_artifact_file = Path(os.environ["CODEX_OUTPUT_ARTIFACT_FILE"])
+        answer_file = Path(os.environ["ANSWER_FILE"])
         final_conclusion_artifact_file = Path(os.environ["FINAL_CONCLUSION_ARTIFACT_FILE"])
         comment_url = (
             f"{github_server_url}/{repository}/issues/{issue_number}#issuecomment-{comment_id}"
@@ -485,20 +492,20 @@ runs:
             trimmed = encoded[: max_bytes - len(suffix_bytes)].decode("utf-8", errors="ignore")
             return f"{trimmed}{suffix}"
 
-        copilot_output = read_or_placeholder(
-            copilot_output_file,
-            f"Copilot output file not found: {copilot_output_file}",
+        codex_output = read_or_placeholder(
+            codex_output_file,
+            f"Codex output file not found: {codex_output_file}",
         )
         final_conclusion = read_or_placeholder(
-            copilot_answer_file,
-            f"Copilot answer file not found: {copilot_answer_file}",
+            answer_file,
+            f"Answer file not found: {answer_file}",
         )
         analysis_prompt = read_or_placeholder(
             analysis_prompt_file,
             f"Analysis prompt file not found: {analysis_prompt_file}",
         )
 
-        copilot_output_artifact_file.write_text(copilot_output, encoding="utf-8")
+        codex_output_artifact_file.write_text(codex_output, encoding="utf-8")
         final_conclusion_artifact_file.write_text(final_conclusion, encoding="utf-8")
 
         def write_multiline_output(name: str, value: str) -> None:
@@ -518,8 +525,8 @@ runs:
             truncate_for_output(analysis_prompt, "analysis-prompt"),
         )
         write_multiline_output(
-            "copilot-output",
-            truncate_for_output(copilot_output, "copilot-output"),
+            "codex-output",
+            truncate_for_output(codex_output, "codex-output"),
         )
         write_multiline_output(
             "final-conclusion",
@@ -527,12 +534,12 @@ runs:
         )
         PY
 
-    - name: Upload Copilot output artifact
+    - name: Upload Codex output artifact
       if: ${{ always() }}
       uses: actions/upload-artifact@v4
       with:
-        name: copilot-output-issue-${{ steps.issue_number.outputs.issue_number }}-comment-${{ steps.initial_comment.outputs.comment-id || 'none' }}
-        path: ${{ steps.runtime.outputs.copilot_output_artifact_file }}
+        name: codex-output-issue-${{ steps.issue_number.outputs.issue_number }}-comment-${{ steps.initial_comment.outputs.comment-id || 'none' }}
+        path: ${{ steps.runtime.outputs.codex_output_artifact_file }}
         if-no-files-found: error
 
     - name: Upload final conclusion artifact

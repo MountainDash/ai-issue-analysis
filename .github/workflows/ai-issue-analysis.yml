@@ -13,7 +13,7 @@ on:
         type: number
 
 jobs:
-  copilot-analysis:
+  codex-analysis:
     if: |
       (github.event_name == 'issues' && github.event.action == 'opened') ||
       github.event_name == 'workflow_dispatch' ||
@@ -32,13 +32,12 @@ jobs:
         id: analysis
         uses: Misteo/ai-issue-analysis@main
         with:
-          # 请在 https://github.com/settings/personal-access-tokens 添加一个token，填写到仓库 secret 里（请确保你有 Copilot Pro）
-          copilot-github-token: ${{ secrets.COPILOT_GITHUB_TOKEN }}
+          codex-api-key: ${{ secrets.CODEX_API_KEY }}
+          codex-base-url: ${{ secrets.CODEX_BASE_URL }}
           bot-name: "@github-actions"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          # 这里不建议换成免费模型，非常笨，不会调用工具，导致后续流程都不正常
-          copilot-model: gpt-5.4
-          copilot-reasoning-effort: xhigh
+          codex-model: deepseek-v4-pro
+          codex-reasoning-effort: high
 
       - name: 查看完整输入输出
         if: always()
@@ -47,12 +46,12 @@ jobs:
           ISSUE_NUMBER: ${{ steps.analysis.outputs.issue-number }}
           COMMENT_ID: ${{ steps.analysis.outputs.comment-id }}
           COMMENT_URL: ${{ steps.analysis.outputs.comment-url }}
-          COPILOT_OUTPUT: ${{ steps.analysis.outputs.copilot-output }}
+          CODEX_OUTPUT: ${{ steps.analysis.outputs.codex-output }}
           FINAL_CONCLUSION: ${{ steps.analysis.outputs.final-conclusion }}
         run: |
           printf '%s\n' "$ANALYSIS_PROMPT"
           echo "issue_number=$ISSUE_NUMBER"
           echo "comment_id=$COMMENT_ID"
           echo "comment_url=$COMMENT_URL"
-          printf '%s\n' "$COPILOT_OUTPUT"
+          printf '%s\n' "$CODEX_OUTPUT"
           printf '%s\n' "$FINAL_CONCLUSION"
