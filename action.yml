@@ -354,9 +354,7 @@ runs:
             if [ "$current_content" != "$last_content" ] && [ -n "$current_content" ]; then
               truncated_content="$current_content"
               if [ "${#truncated_content}" -gt 55000 ]; then
-                truncated_content="${truncated_content:0:55000}
-
-... [truncated for comment size limit] ..."
+                truncated_content="${truncated_content:0:55000}"$'\n\n[truncated for comment size limit]'
               fi
               {
                 echo "$INITIAL_BODY"
