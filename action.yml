@@ -265,14 +265,17 @@ runs:
 
         lines = [f'model = "{model}"']
         if base_url:
+            lines.append(f'model_provider = "custom"')
             lines.append("")
             lines.append("[model_providers.custom]")
             lines.append(f'name = "Custom Provider"')
             lines.append(f'base_url = "{base_url}"')
             lines.append(f'env_key = "CODEX_API_KEY"')
-            lines.append(f'wire_api = "chat"')
-            lines.append("")
-            lines.append('model_provider = "custom"')
+            lines.append(f'wire_api = "responses"')
+            lines.append(f'supports_websockets = false')
+            lines.append(f'requires_openai_auth = false')
+        else:
+            lines.append(f'openai_base_url = "https://api.openai.com/v1"')
 
         config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         print(f"Codex config written to {config_path}:")
@@ -322,13 +325,13 @@ runs:
           echo "  body-file: $BODY_FILE"
           echo "  codex config:"
           cat ~/.codex/config.toml
-          echo "  command: codex exec --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  command: codex exec --sandbox workspace-write \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --full-auto \
+        codex exec --sandbox workspace-write \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
         CODEX_PID=$!
         echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
