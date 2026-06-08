@@ -352,6 +352,12 @@ runs:
           if [ -f "$OUTPUT_FILE" ]; then
             current_content=$(cat "$OUTPUT_FILE")
             if [ "$current_content" != "$last_content" ] && [ -n "$current_content" ]; then
+              truncated_content="$current_content"
+              if [ "${#truncated_content}" -gt 55000 ]; then
+                truncated_content="${truncated_content:0:55000}
+
+... [truncated for comment size limit] ..."
+              fi
               {
                 echo "$INITIAL_BODY"
                 echo
@@ -360,7 +366,7 @@ runs:
                 echo "$DETAILS_BEGIN"
                 echo
                 echo '```text'
-                echo "$current_content"
+                echo "$truncated_content"
                 echo '```'
                 echo
                 echo "$DETAILS_END"
@@ -372,7 +378,7 @@ runs:
                 fi
               } > "$BODY_FILE"
 
-              jq -n --arg body "$(cat "$BODY_FILE")" '{"body":$body}' | \
+              jq -Rs '{"body":.}' < "$BODY_FILE" | \
                 curl -s -L -X PATCH \
                   -H "Authorization: token $COMMENT_GITHUB_TOKEN" \
                   -H "Accept: application/vnd.github.v3+json" \
