@@ -30,13 +30,13 @@ jobs:
       # - .claude/skills/generic-issue-log-analysis/SKILL.md
       - name: Analyze issue with AI
         id: analysis
-        uses: Misteo/ai-issue-analysis@main
+        uses: Misteo/ai-issue-analysis@codex
         with:
           codex-api-key: ${{ secrets.CODEX_API_KEY }}
           codex-base-url: ${{ secrets.CODEX_BASE_URL }}
           bot-name: "@github-actions"
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          codex-model: deepseek-v4-pro
+          codex-model: gpt-5.5
 
       - name: 查看完整输入输出
         if: always()
