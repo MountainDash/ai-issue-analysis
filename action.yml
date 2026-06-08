@@ -303,14 +303,14 @@ runs:
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  command: codex -q --model \"$CODEX_MODEL\" --reasoning-effort \"$CODEX_REASONING_EFFORT\" --approval-mode full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  command: codex exec --model \"$CODEX_MODEL\" --reasoning-effort \"$CODEX_REASONING_EFFORT\" --full-auto \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex -q --model "$CODEX_MODEL" --reasoning-effort "$CODEX_REASONING_EFFORT" \
-          --approval-mode full-auto \
+        codex exec --model "$CODEX_MODEL" --reasoning-effort "$CODEX_REASONING_EFFORT" \
+          --full-auto \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
         CODEX_PID=$!
         echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
