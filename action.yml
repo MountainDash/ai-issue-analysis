@@ -325,13 +325,13 @@ runs:
           echo "  body-file: $BODY_FILE"
           echo "  codex config:"
           cat ~/.codex/config.toml
-          echo "  command: codex exec --sandbox workspace-write \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  command: codex exec --dangerously-bypass-approvals-and-sandbox \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --sandbox workspace-write \
+        codex exec --dangerously-bypass-approvals-and-sandbox \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
         CODEX_PID=$!
         echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
