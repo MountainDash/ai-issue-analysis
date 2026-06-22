@@ -1,5 +1,5 @@
 name: AI Issue Analysis
-description: Analyze a GitHub issue with Codex CLI and keep a comment updated with progress and the final result.
+description: Analyze a GitHub issue with an AI CLI (Codex or Claude Code) and keep a comment updated with progress and the final result.
 author: MistEO
 
 inputs:
@@ -10,19 +10,36 @@ inputs:
   github-token:
     description: GitHub token used to create and update issue comments.
     required: true
+  ai-tool:
+    description: AI CLI tool to use for analysis. Supported values are "codex" and "claude".
+    required: false
+    default: codex
+  ai-api-key:
+    description: API key for the AI CLI. Supports multiple keys, one per line, and randomly picks one. If empty, falls back to codex-api-key.
+    required: false
+    default: ""
+  ai-base-url:
+    description: Base URL for the AI API endpoint. Only used when ai-tool is "codex". If empty, falls back to codex-base-url.
+    required: false
+    default: ""
+  ai-model:
+    description: Model name for the AI CLI. If empty, falls back to codex-model.
+    required: false
+    default: ""
   codex-api-key:
-    description: API key for the Codex CLI (set as OPENAI_API_KEY). Supports multiple keys, one per line, and randomly picks one.
-    required: true
+    description: "[Deprecated: use ai-api-key] API key for the Codex CLI. Supports multiple keys, one per line, and randomly picks one."
+    required: false
+    default: ""
   codex-base-url:
-    description: Base URL for the Codex CLI API endpoint (set as OPENAI_BASE_URL). Leave empty to use the default OpenAI endpoint.
+    description: "[Deprecated: use ai-base-url] Base URL for the Codex CLI API endpoint."
     required: false
     default: ""
   codex-model:
-    description: Model name passed to the Codex CLI via --model.
+    description: "[Deprecated: use ai-model] Model name for the Codex CLI."
     required: false
     default: gpt-5.5
   codex-package:
-    description: NPM package to install for the Codex CLI.
+    description: NPM package to install for the Codex CLI. Only used when ai-tool is "codex".
     required: false
     default: "@openai/codex"
   bot-name:
@@ -92,13 +109,13 @@ outputs:
     description: The URL of the issue comment that was created and then updated.
     value: ${{ steps.export_results.outputs.comment-url }}
   analysis-prompt:
-    description: Final rendered prompt passed to Codex for this run.
+    description: Final rendered prompt passed to the AI CLI for this run.
     value: ${{ steps.export_results.outputs.analysis-prompt }}
-  codex-output:
-    description: Execution log including pre-run parameters, prompt, and Codex stdout and stderr.
-    value: ${{ steps.export_results.outputs.codex-output }}
+  ai-output:
+    description: Execution log including pre-run parameters, prompt, and AI CLI stdout and stderr.
+    value: ${{ steps.export_results.outputs.ai-output }}
   final-conclusion:
-    description: Final conclusion content produced by Codex.
+    description: Final conclusion content produced by the AI CLI.
     value: ${{ steps.export_results.outputs.final-conclusion }}
 
 runs:
@@ -108,7 +125,8 @@ runs:
       if: ${{ inputs.checkout-repository == 'true' }}
       uses: actions/checkout@v4
 
-    - name: Link .claude to .codex
+    - name: Link skill directory for Codex
+      if: ${{ inputs.ai-tool == 'codex' }}
       shell: bash
       run: |
         if [ -d ".claude" ] && [ ! -e ".codex" ]; then
@@ -161,9 +179,9 @@ runs:
 
         {
           echo "analysis_prompt_file=$CACHE_DIR/analysis_prompt.txt"
-          echo "codex_output_file=$CACHE_DIR/codex_output.log"
-          echo "codex_execution_log_file=$CACHE_DIR/codex_execution.log"
-          echo "codex_output_artifact_file=$CACHE_DIR/codex_output.txt"
+          echo "ai_output_file=$CACHE_DIR/ai_output.log"
+          echo "ai_execution_log_file=$CACHE_DIR/ai_execution.log"
+          echo "ai_output_artifact_file=$CACHE_DIR/ai_output.txt"
           echo "comment_body_file=$CACHE_DIR/comment_body.txt"
           echo "final_comment_file=$CACHE_DIR/final_comment.md"
           echo "final_conclusion_artifact_file=$CACHE_DIR/final_conclusion.md"
@@ -243,14 +261,26 @@ runs:
           ---
           ${{ steps.runtime.outputs.action_link }}
 
-    - name: Install Codex CLI
-      shell: bash
-      run: npm install -g "${{ inputs.codex-package }}"
-
-    - name: Resolve Codex API key and configure Codex CLI
-      id: resolve_codex_key
+    - name: Install AI CLI
       shell: bash
       env:
+        AI_TOOL: ${{ inputs.ai-tool }}
+        CODEX_PACKAGE: ${{ inputs.codex-package }}
+      run: |
+        if [ "$AI_TOOL" = "claude" ]; then
+          npm install -g @anthropic-ai/claude-code
+        else
+          npm install -g "$CODEX_PACKAGE"
+        fi
+
+    - name: Resolve AI key and configure
+      id: resolve_ai_key
+      shell: bash
+      env:
+        AI_TOOL: ${{ inputs.ai-tool }}
+        INPUT_AI_API_KEY: ${{ inputs.ai-api-key }}
+        INPUT_AI_BASE_URL: ${{ inputs.ai-base-url }}
+        INPUT_AI_MODEL: ${{ inputs.ai-model }}
         INPUT_CODEX_API_KEY: ${{ inputs.codex-api-key }}
         INPUT_CODEX_BASE_URL: ${{ inputs.codex-base-url }}
         INPUT_CODEX_MODEL: ${{ inputs.codex-model }}
@@ -260,62 +290,69 @@ runs:
         import secrets
         from pathlib import Path
 
-        raw_value = os.environ["INPUT_CODEX_API_KEY"]
-        keys = [line.strip() for line in raw_value.splitlines() if line.strip()]
+        ai_tool = os.environ["AI_TOOL"]
 
+        # Resolve with fallback: ai-* takes priority, codex-* is deprecated fallback
+        raw_key = os.environ["INPUT_AI_API_KEY"] or os.environ["INPUT_CODEX_API_KEY"]
+        base_url = (os.environ["INPUT_AI_BASE_URL"] or os.environ["INPUT_CODEX_BASE_URL"]).strip()
+        model = (os.environ["INPUT_AI_MODEL"] or os.environ["INPUT_CODEX_MODEL"]).strip()
+
+        keys = [line.strip() for line in raw_key.splitlines() if line.strip()]
         if not keys:
-            raise SystemExit("Input codex-api-key is empty after trimming blank lines.")
+            raise SystemExit("API key is empty. Provide ai-api-key (or the deprecated codex-api-key).")
 
         selected_key = secrets.choice(keys)
 
-        base_url = os.environ["INPUT_CODEX_BASE_URL"].strip()
-        model = os.environ["INPUT_CODEX_MODEL"].strip()
+        if ai_tool == "codex":
+            codex_home = Path.home() / ".codex"
+            codex_home.mkdir(parents=True, exist_ok=True)
+            config_path = codex_home / "config.toml"
 
-        codex_home = Path.home() / ".codex"
-        codex_home.mkdir(parents=True, exist_ok=True)
-        config_path = codex_home / "config.toml"
+            lines = [f'model = "{model}"']
+            if base_url:
+                lines.append('model_provider = "custom"')
+                lines.append("")
+                lines.append("[model_providers.custom]")
+                lines.append('name = "Custom Provider"')
+                lines.append(f'base_url = "{base_url}"')
+                lines.append('env_key = "CODEX_API_KEY"')
+                lines.append('wire_api = "responses"')
+                lines.append('supports_websockets = false')
+                lines.append('requires_openai_auth = false')
+            else:
+                lines.append('openai_base_url = "https://api.openai.com/v1"')
 
-        lines = [f'model = "{model}"']
-        if base_url:
-            lines.append(f'model_provider = "custom"')
-            lines.append("")
-            lines.append("[model_providers.custom]")
-            lines.append(f'name = "Custom Provider"')
-            lines.append(f'base_url = "{base_url}"')
-            lines.append(f'env_key = "CODEX_API_KEY"')
-            lines.append(f'wire_api = "responses"')
-            lines.append(f'supports_websockets = false')
-            lines.append(f'requires_openai_auth = false')
+            config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+            print(f"Codex config written to {config_path}:")
+            print(config_path.read_text(encoding="utf-8"))
         else:
-            lines.append(f'openai_base_url = "https://api.openai.com/v1"')
-
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"Codex config written to {config_path}:")
-        print(config_path.read_text(encoding="utf-8"))
+            print(f"Using Claude Code with model={model}")
 
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-            fh.write(f"codex_api_key={selected_key}\n")
-            fh.write(f"codex_key_count={len(keys)}\n")
+            fh.write(f"ai_api_key={selected_key}\n")
+            fh.write(f"ai_key_count={len(keys)}\n")
+            fh.write(f"ai_model={model}\n")
         PY
 
-    - name: Run Codex analysis with streaming updates
+    - name: Run AI analysis with streaming updates
       shell: bash
       env:
-        CODEX_API_KEY: ${{ steps.resolve_codex_key.outputs.codex_api_key }}
+        AI_TOOL: ${{ inputs.ai-tool }}
+        AI_API_KEY: ${{ steps.resolve_ai_key.outputs.ai_api_key }}
+        AI_MODEL: ${{ steps.resolve_ai_key.outputs.ai_model }}
         COMMENT_GITHUB_TOKEN: ${{ inputs.github-token }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         COMMENT_ID: ${{ steps.initial_comment.outputs.comment-id }}
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPO: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
-        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        OUTPUT_FILE: ${{ steps.runtime.outputs.ai_output_file }}
+        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.ai_execution_log_file }}
         BODY_FILE: ${{ steps.runtime.outputs.comment_body_file }}
         INITIAL_BODY: ${{ inputs.initial-comment-body }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
         DETAILS_END: ${{ steps.runtime.outputs.details_end }}
-        CODEX_MODEL: ${{ inputs.codex-model }}
         STREAM_UPDATE_INTERVAL: ${{ inputs.stream-update-interval-seconds }}
         EXTRA_COMMENT_CONTENT: ${{ inputs.extra-comment-content }}
       run: |
@@ -324,29 +361,35 @@ runs:
         : > "$OUTPUT_FILE"
         : > "$EXECUTION_LOG_FILE"
         {
-          echo "Codex invocation parameters:"
+          echo "AI invocation parameters:"
+          echo "  tool: $AI_TOOL"
           echo "  repo: $REPO"
           echo "  issue-number: $ISSUE_NUMBER"
           echo "  comment-id: $COMMENT_ID"
           echo "  comment-url: $COMMENT_URL"
-          echo "  model: $CODEX_MODEL"
-          echo "  api-key-count: ${{ steps.resolve_codex_key.outputs.codex_key_count }}"
+          echo "  model: $AI_MODEL"
+          echo "  api-key-count: ${{ steps.resolve_ai_key.outputs.ai_key_count }}"
           echo "  stream-update-interval-seconds: $STREAM_UPDATE_INTERVAL"
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  codex config:"
-          cat ~/.codex/config.toml
-          echo "  command: codex exec --dangerously-bypass-approvals-and-sandbox \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          if [ "$AI_TOOL" = "codex" ] && [ -f ~/.codex/config.toml ]; then
+            echo "  codex config:"
+            cat ~/.codex/config.toml
+          fi
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --dangerously-bypass-approvals-and-sandbox \
-          "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
-        CODEX_PID=$!
-        echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
+        PROMPT_TEXT="$(cat "$ANALYSIS_PROMPT_FILE")"
+        if [ "$AI_TOOL" = "claude" ]; then
+          claude --print --dangerously-skip-permissions --model "$AI_MODEL" "$PROMPT_TEXT" > "$OUTPUT_FILE" 2>&1 &
+        else
+          codex exec --dangerously-bypass-approvals-and-sandbox "$PROMPT_TEXT" > "$OUTPUT_FILE" 2>&1 &
+        fi
+        AI_PID=$!
+        echo "AI process started with PID $AI_PID" | tee -a "$EXECUTION_LOG_FILE"
 
         last_content=""
 
@@ -354,9 +397,9 @@ runs:
           sleep "$STREAM_UPDATE_INTERVAL" &
           sleep_pid=$!
 
-          wait -n "$CODEX_PID" "$sleep_pid" 2>/dev/null || true
+          wait -n "$AI_PID" "$sleep_pid" 2>/dev/null || true
 
-          if ! kill -0 "$CODEX_PID" 2>/dev/null; then
+          if ! kill -0 "$AI_PID" 2>/dev/null; then
             kill "$sleep_pid" 2>/dev/null || true
             break
           fi
@@ -401,32 +444,32 @@ runs:
           fi
         done
 
-        wait "$CODEX_PID"
-        CODEX_EXIT=$?
+        wait "$AI_PID" || true
+        AI_EXIT=$?
 
         {
           echo
-          echo "Codex output begins"
+          echo "AI output begins"
           if [ -f "$OUTPUT_FILE" ]; then
             cat "$OUTPUT_FILE"
           fi
           echo
-          echo "Codex output ends"
-          echo "Codex exit code: $CODEX_EXIT"
+          echo "AI output ends"
+          echo "AI exit code: $AI_EXIT"
         } >> "$EXECUTION_LOG_FILE"
 
-        exit "$CODEX_EXIT"
+        exit "$AI_EXIT"
 
     - name: Full analysis
       if: ${{ always() }}
       shell: bash
       env:
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        AI_OUTPUT_FILE: ${{ steps.runtime.outputs.ai_execution_log_file }}
         ANSWER_FILE: ${{ inputs.answer-file }}
         PROCESS_ERROR_MESSAGE: ${{ inputs.process-error-message }}
       run: |
-        if [ -f "$CODEX_OUTPUT_FILE" ]; then
-          cat "$CODEX_OUTPUT_FILE"
+        if [ -f "$AI_OUTPUT_FILE" ]; then
+          cat "$AI_OUTPUT_FILE"
         fi
         echo
         echo "---"
@@ -442,7 +485,7 @@ runs:
       shell: bash
       env:
         ANSWER_FILE: ${{ inputs.answer-file }}
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
+        AI_OUTPUT_FILE: ${{ steps.runtime.outputs.ai_output_file }}
         FINAL_COMMENT_FILE: ${{ steps.runtime.outputs.final_comment_file }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
@@ -465,8 +508,8 @@ runs:
           echo "$DETAILS_BEGIN"
           echo
           echo '```text'
-          if [ -f "$CODEX_OUTPUT_FILE" ]; then
-            cat "$CODEX_OUTPUT_FILE"
+          if [ -f "$AI_OUTPUT_FILE" ]; then
+            cat "$AI_OUTPUT_FILE"
           fi
           echo '```'
           echo
@@ -489,8 +532,8 @@ runs:
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPOSITORY: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
-        CODEX_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.codex_output_artifact_file }}
+        AI_OUTPUT_FILE: ${{ steps.runtime.outputs.ai_execution_log_file }}
+        AI_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.ai_output_artifact_file }}
         ANSWER_FILE: ${{ inputs.answer-file }}
         FINAL_CONCLUSION_ARTIFACT_FILE: ${{ steps.runtime.outputs.final_conclusion_artifact_file }}
       run: |
@@ -505,8 +548,8 @@ runs:
         issue_number = os.environ["ISSUE_NUMBER"]
         repository = os.environ["REPOSITORY"]
         analysis_prompt_file = Path(os.environ["ANALYSIS_PROMPT_FILE"])
-        codex_output_file = Path(os.environ["CODEX_OUTPUT_FILE"])
-        codex_output_artifact_file = Path(os.environ["CODEX_OUTPUT_ARTIFACT_FILE"])
+        ai_output_file = Path(os.environ["AI_OUTPUT_FILE"])
+        ai_output_artifact_file = Path(os.environ["AI_OUTPUT_ARTIFACT_FILE"])
         answer_file = Path(os.environ["ANSWER_FILE"])
         final_conclusion_artifact_file = Path(os.environ["FINAL_CONCLUSION_ARTIFACT_FILE"])
         comment_url = (
@@ -533,9 +576,9 @@ runs:
             trimmed = encoded[: max_bytes - len(suffix_bytes)].decode("utf-8", errors="ignore")
             return f"{trimmed}{suffix}"
 
-        codex_output = read_or_placeholder(
-            codex_output_file,
-            f"Codex output file not found: {codex_output_file}",
+        ai_output = read_or_placeholder(
+            ai_output_file,
+            f"AI output file not found: {ai_output_file}",
         )
         final_conclusion = read_or_placeholder(
             answer_file,
@@ -546,7 +589,7 @@ runs:
             f"Analysis prompt file not found: {analysis_prompt_file}",
         )
 
-        codex_output_artifact_file.write_text(codex_output, encoding="utf-8")
+        ai_output_artifact_file.write_text(ai_output, encoding="utf-8")
         final_conclusion_artifact_file.write_text(final_conclusion, encoding="utf-8")
 
         def write_multiline_output(name: str, value: str) -> None:
@@ -566,8 +609,8 @@ runs:
             truncate_for_output(analysis_prompt, "analysis-prompt"),
         )
         write_multiline_output(
-            "codex-output",
-            truncate_for_output(codex_output, "codex-output"),
+            "ai-output",
+            truncate_for_output(ai_output, "ai-output"),
         )
         write_multiline_output(
             "final-conclusion",
@@ -575,12 +618,12 @@ runs:
         )
         PY
 
-    - name: Upload Codex output artifact
+    - name: Upload AI output artifact
       if: ${{ always() }}
       uses: actions/upload-artifact@v4
       with:
-        name: codex-output-issue-${{ steps.issue_number.outputs.issue_number }}-comment-${{ steps.initial_comment.outputs.comment-id || 'none' }}
-        path: ${{ steps.runtime.outputs.codex_output_artifact_file }}
+        name: ai-output-issue-${{ steps.issue_number.outputs.issue_number }}-comment-${{ steps.initial_comment.outputs.comment-id || 'none' }}
+        path: ${{ steps.runtime.outputs.ai_output_artifact_file }}
         if-no-files-found: error
 
     - name: Upload final conclusion artifact
