@@ -1,5 +1,7 @@
 # ai-issue-analysis
 
+> 本项目基于 [MistEO/ai-issue-analysis](https://github.com/MistEO/ai-issue-analysis) 改进而来。基于项目需求进行了调整。
+
 一个通用的 GitHub composite action，用来在 Issue 打开或被评论时调用 [MiMo Code CLI](https://github.com/XiaomiMiMo/MiMo-Code) 做分析，并把分析过程和最终结论持续回写到同一条评论里。默认使用 MiMo Auto 免费通道，零配置即可开始；也支持接入任意 OpenAI 兼容 API。
 
 ## 快速接入
