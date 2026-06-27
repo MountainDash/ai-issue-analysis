@@ -1,5 +1,5 @@
 name: AI Issue Analysis
-description: Analyze a GitHub issue with Codex CLI and keep a comment updated with progress and the final result.
+description: Analyze a GitHub issue with MiMo Code CLI and keep a comment updated with progress and the final result.
 author: MistEO
 
 inputs:
@@ -10,21 +10,22 @@ inputs:
   github-token:
     description: GitHub token used to create and update issue comments.
     required: true
-  codex-api-key:
-    description: API key for the Codex CLI (set as OPENAI_API_KEY). Supports multiple keys, one per line, and randomly picks one.
-    required: true
-  codex-base-url:
-    description: Base URL for the Codex CLI API endpoint (set as OPENAI_BASE_URL). Leave empty to use the default OpenAI endpoint.
+  mimo-api-key:
+    description: API key for MiMo Code CLI. Supports multiple keys, one per line, and randomly picks one. Leave empty to use the built-in MiMo Auto free channel.
     required: false
     default: ""
-  codex-model:
-    description: Model name passed to the Codex CLI via --model.
+  mimo-base-url:
+    description: Base URL for the API endpoint (used to configure a custom provider in MiMo Code). Leave empty to use the default provider or MiMo Auto.
     required: false
-    default: gpt-5.5
-  codex-package:
-    description: NPM package to install for the Codex CLI.
+    default: ""
+  mimo-model:
+    description: Model name in provider/model format (e.g. openai/gpt-5.5). Leave empty to use MiMo Auto default model.
     required: false
-    default: "@openai/codex"
+    default: ""
+  mimo-package:
+    description: NPM package to install for the MiMo Code CLI.
+    required: false
+    default: "@mimo-ai/cli"
   bot-name:
     description: Bot mention to strip from issue_comment messages before appending extra requirements.
     required: false
@@ -47,7 +48,7 @@ inputs:
   prompt-template:
     description: Base prompt template. Supported placeholders are {{issue_number}}, {{answer_file}}, {{repository}}, and {{event_name}}.
     required: false
-    default: 分析 GitHub Issue {{issue_number}}。把最终结论写到 {{answer_file}}。
+    default: 分析 GitHub 仓库 {{repository}} 的 Issue {{issue_number}}。把最终结论写到 {{answer_file}}。
   comment-prompt-template:
     description: Extra prompt appended when the triggering issue comment still has content after removing the bot mention. Supported placeholders also include {{comment_body}}.
     required: false
@@ -92,13 +93,13 @@ outputs:
     description: The URL of the issue comment that was created and then updated.
     value: ${{ steps.export_results.outputs.comment-url }}
   analysis-prompt:
-    description: Final rendered prompt passed to Codex for this run.
+    description: Final rendered prompt passed to MiMo Code for this run.
     value: ${{ steps.export_results.outputs.analysis-prompt }}
   codex-output:
-    description: Execution log including pre-run parameters, prompt, and Codex stdout and stderr.
+    description: Execution log including pre-run parameters, prompt, and MiMo Code stdout and stderr.
     value: ${{ steps.export_results.outputs.codex-output }}
   final-conclusion:
-    description: Final conclusion content produced by Codex.
+    description: Final conclusion content produced by MiMo Code.
     value: ${{ steps.export_results.outputs.final-conclusion }}
 
 runs:
@@ -107,18 +108,6 @@ runs:
     - name: Checkout repository
       if: ${{ inputs.checkout-repository == 'true' }}
       uses: actions/checkout@v4
-
-    - name: Link .claude to .codex
-      shell: bash
-      run: |
-        if [ -d ".claude" ] && [ ! -e ".codex" ]; then
-          ln -s .claude .codex
-          echo "Linked .claude -> .codex"
-        elif [ -d ".codex" ]; then
-          echo ".codex already exists, skipping"
-        else
-          echo "No .claude or .codex directory found"
-        fi
 
     - name: Determine issue number
       id: issue_number
@@ -161,9 +150,9 @@ runs:
 
         {
           echo "analysis_prompt_file=$CACHE_DIR/analysis_prompt.txt"
-          echo "codex_output_file=$CACHE_DIR/codex_output.log"
-          echo "codex_execution_log_file=$CACHE_DIR/codex_execution.log"
-          echo "codex_output_artifact_file=$CACHE_DIR/codex_output.txt"
+          echo "mimo_output_file=$CACHE_DIR/mimo_output.log"
+          echo "mimo_execution_log_file=$CACHE_DIR/mimo_execution.log"
+          echo "mimo_output_artifact_file=$CACHE_DIR/mimo_output.txt"
           echo "comment_body_file=$CACHE_DIR/comment_body.txt"
           echo "final_comment_file=$CACHE_DIR/final_comment.md"
           echo "final_conclusion_artifact_file=$CACHE_DIR/final_conclusion.md"
@@ -243,79 +232,95 @@ runs:
           ---
           ${{ steps.runtime.outputs.action_link }}
 
-    - name: Install Codex CLI
+    - name: Install MiMo Code CLI
       shell: bash
-      run: npm install -g "${{ inputs.codex-package }}"
+      run: npm install -g "${{ inputs.mimo-package }}"
 
-    - name: Resolve Codex API key and configure Codex CLI
-      id: resolve_codex_key
+    - name: Resolve MiMo API key and configure
+      id: resolve_mimo_config
       shell: bash
       env:
-        INPUT_CODEX_API_KEY: ${{ inputs.codex-api-key }}
-        INPUT_CODEX_BASE_URL: ${{ inputs.codex-base-url }}
-        INPUT_CODEX_MODEL: ${{ inputs.codex-model }}
+        INPUT_MIMO_API_KEY: ${{ inputs.mimo-api-key }}
+        INPUT_MIMO_BASE_URL: ${{ inputs.mimo-base-url }}
+        INPUT_MIMO_MODEL: ${{ inputs.mimo-model }}
       run: |
         python <<'PY'
+        import json
         import os
         import secrets
-        from pathlib import Path
 
-        raw_value = os.environ["INPUT_CODEX_API_KEY"]
+        raw_value = os.environ["INPUT_MIMO_API_KEY"]
         keys = [line.strip() for line in raw_value.splitlines() if line.strip()]
 
-        if not keys:
-            raise SystemExit("Input codex-api-key is empty after trimming blank lines.")
+        has_api_key = bool(keys)
+        selected_key = ""
+        config_content = ""
 
-        selected_key = secrets.choice(keys)
+        if has_api_key:
+            selected_key = secrets.choice(keys)
 
-        base_url = os.environ["INPUT_CODEX_BASE_URL"].strip()
-        model = os.environ["INPUT_CODEX_MODEL"].strip()
+        base_url = os.environ["INPUT_MIMO_BASE_URL"].strip()
+        model = os.environ["INPUT_MIMO_MODEL"].strip()
 
-        codex_home = Path.home() / ".codex"
-        codex_home.mkdir(parents=True, exist_ok=True)
-        config_path = codex_home / "config.toml"
+        if has_api_key:
+            effective_base_url = base_url if base_url else "https://api.openai.com/v1"
+            if not model:
+                model = "openai/gpt-5.5"
+            provider_id = model.split("/")[0] if "/" in model else "custom"
+            model_name = model.split("/", 1)[1] if "/" in model else model
 
-        lines = [f'model = "{model}"']
-        if base_url:
-            lines.append(f'model_provider = "custom"')
-            lines.append("")
-            lines.append("[model_providers.custom]")
-            lines.append(f'name = "Custom Provider"')
-            lines.append(f'base_url = "{base_url}"')
-            lines.append(f'env_key = "CODEX_API_KEY"')
-            lines.append(f'wire_api = "responses"')
-            lines.append(f'supports_websockets = false')
-            lines.append(f'requires_openai_auth = false')
+            config = {
+                "provider": {
+                    provider_id: {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "Custom Provider",
+                        "options": {
+                            "baseURL": effective_base_url,
+                            "apiKey": selected_key
+                        },
+                        "models": {
+                            model_name: {}
+                        }
+                    }
+                },
+                "model": model
+            }
+            config_content = json.dumps(config)
+            print(f"MiMo config (custom provider):")
+            print(json.dumps(config, indent=2))
         else:
-            lines.append(f'openai_base_url = "https://api.openai.com/v1"')
-
-        config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-        print(f"Codex config written to {config_path}:")
-        print(config_path.read_text(encoding="utf-8"))
+            if model:
+                config = {"model": model}
+                config_content = json.dumps(config)
+                print(f"MiMo config (MiMo Auto with explicit model):")
+                print(json.dumps(config, indent=2))
+            else:
+                print("MiMo config: using MiMo Auto (no API key, no model override)")
 
         with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
-            fh.write(f"codex_api_key={selected_key}\n")
-            fh.write(f"codex_key_count={len(keys)}\n")
+            fh.write(f"mimo_has_api_key={'true' if has_api_key else 'false'}\n")
+            fh.write(f"mimo_key_count={len(keys)}\n")
+            fh.write(f"mimo_config_content={config_content}\n")
         PY
 
-    - name: Run Codex analysis with streaming updates
+    - name: Run MiMo Code analysis with streaming updates
       shell: bash
       env:
-        CODEX_API_KEY: ${{ steps.resolve_codex_key.outputs.codex_api_key }}
+        MIMO_CONFIG_CONTENT: ${{ steps.resolve_mimo_config.outputs.mimo_config_content }}
         COMMENT_GITHUB_TOKEN: ${{ inputs.github-token }}
         GITHUB_SERVER_URL: ${{ github.server_url }}
         COMMENT_ID: ${{ steps.initial_comment.outputs.comment-id }}
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPO: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
-        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        OUTPUT_FILE: ${{ steps.runtime.outputs.mimo_output_file }}
+        EXECUTION_LOG_FILE: ${{ steps.runtime.outputs.mimo_execution_log_file }}
         BODY_FILE: ${{ steps.runtime.outputs.comment_body_file }}
         INITIAL_BODY: ${{ inputs.initial-comment-body }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
         DETAILS_END: ${{ steps.runtime.outputs.details_end }}
-        CODEX_MODEL: ${{ inputs.codex-model }}
+        MIMO_MODEL: ${{ inputs.mimo-model }}
         STREAM_UPDATE_INTERVAL: ${{ inputs.stream-update-interval-seconds }}
         EXTRA_COMMENT_CONTENT: ${{ inputs.extra-comment-content }}
       run: |
@@ -324,29 +329,30 @@ runs:
         : > "$OUTPUT_FILE"
         : > "$EXECUTION_LOG_FILE"
         {
-          echo "Codex invocation parameters:"
+          echo "MiMo Code invocation parameters:"
           echo "  repo: $REPO"
           echo "  issue-number: $ISSUE_NUMBER"
           echo "  comment-id: $COMMENT_ID"
           echo "  comment-url: $COMMENT_URL"
-          echo "  model: $CODEX_MODEL"
-          echo "  api-key-count: ${{ steps.resolve_codex_key.outputs.codex_key_count }}"
+          echo "  model: $MIMO_MODEL"
+          echo "  has-api-key: ${{ steps.resolve_mimo_config.outputs.mimo_has_api_key }}"
+          echo "  api-key-count: ${{ steps.resolve_mimo_config.outputs.mimo_key_count }}"
           echo "  stream-update-interval-seconds: $STREAM_UPDATE_INTERVAL"
           echo "  analysis-prompt-file: $ANALYSIS_PROMPT_FILE"
           echo "  output-file: $OUTPUT_FILE"
           echo "  body-file: $BODY_FILE"
-          echo "  codex config:"
-          cat ~/.codex/config.toml
-          echo "  command: codex exec --dangerously-bypass-approvals-and-sandbox \"<contents of $ANALYSIS_PROMPT_FILE>\""
+          echo "  config-content: $MIMO_CONFIG_CONTENT"
+          echo "  command: mimo run --dangerously-skip-permissions \"<contents of $ANALYSIS_PROMPT_FILE>\""
           echo "Prompt content begins"
           cat "$ANALYSIS_PROMPT_FILE"
           echo "Prompt content ends"
         } | tee -a "$EXECUTION_LOG_FILE"
 
-        codex exec --dangerously-bypass-approvals-and-sandbox \
+        OPENCODE_CONFIG_CONTENT="$MIMO_CONFIG_CONTENT" \
+          mimo run --dangerously-skip-permissions \
           "$(cat "$ANALYSIS_PROMPT_FILE")" > "$OUTPUT_FILE" 2>&1 &
-        CODEX_PID=$!
-        echo "Codex started with PID $CODEX_PID" | tee -a "$EXECUTION_LOG_FILE"
+        MIMO_PID=$!
+        echo "MiMo Code started with PID $MIMO_PID" | tee -a "$EXECUTION_LOG_FILE"
 
         last_content=""
 
@@ -354,9 +360,9 @@ runs:
           sleep "$STREAM_UPDATE_INTERVAL" &
           sleep_pid=$!
 
-          wait -n "$CODEX_PID" "$sleep_pid" 2>/dev/null || true
+          wait -n "$MIMO_PID" "$sleep_pid" 2>/dev/null || true
 
-          if ! kill -0 "$CODEX_PID" 2>/dev/null; then
+          if ! kill -0 "$MIMO_PID" 2>/dev/null; then
             kill "$sleep_pid" 2>/dev/null || true
             break
           fi
@@ -401,32 +407,32 @@ runs:
           fi
         done
 
-        wait "$CODEX_PID"
-        CODEX_EXIT=$?
+        wait "$MIMO_PID"
+        MIMO_EXIT=$?
 
         {
           echo
-          echo "Codex output begins"
+          echo "MiMo Code output begins"
           if [ -f "$OUTPUT_FILE" ]; then
             cat "$OUTPUT_FILE"
           fi
           echo
-          echo "Codex output ends"
-          echo "Codex exit code: $CODEX_EXIT"
+          echo "MiMo Code output ends"
+          echo "MiMo Code exit code: $MIMO_EXIT"
         } >> "$EXECUTION_LOG_FILE"
 
-        exit "$CODEX_EXIT"
+        exit "$MIMO_EXIT"
 
     - name: Full analysis
       if: ${{ always() }}
       shell: bash
       env:
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
+        MIMO_OUTPUT_FILE: ${{ steps.runtime.outputs.mimo_execution_log_file }}
         ANSWER_FILE: ${{ inputs.answer-file }}
         PROCESS_ERROR_MESSAGE: ${{ inputs.process-error-message }}
       run: |
-        if [ -f "$CODEX_OUTPUT_FILE" ]; then
-          cat "$CODEX_OUTPUT_FILE"
+        if [ -f "$MIMO_OUTPUT_FILE" ]; then
+          cat "$MIMO_OUTPUT_FILE"
         fi
         echo
         echo "---"
@@ -442,7 +448,7 @@ runs:
       shell: bash
       env:
         ANSWER_FILE: ${{ inputs.answer-file }}
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_output_file }}
+        MIMO_OUTPUT_FILE: ${{ steps.runtime.outputs.mimo_output_file }}
         FINAL_COMMENT_FILE: ${{ steps.runtime.outputs.final_comment_file }}
         ACTION_LINK: ${{ steps.runtime.outputs.action_link }}
         DETAILS_BEGIN: ${{ steps.runtime.outputs.details_begin }}
@@ -465,8 +471,8 @@ runs:
           echo "$DETAILS_BEGIN"
           echo
           echo '```text'
-          if [ -f "$CODEX_OUTPUT_FILE" ]; then
-            cat "$CODEX_OUTPUT_FILE"
+          if [ -f "$MIMO_OUTPUT_FILE" ]; then
+            cat "$MIMO_OUTPUT_FILE"
           fi
           echo '```'
           echo
@@ -489,8 +495,8 @@ runs:
         ISSUE_NUMBER: ${{ steps.issue_number.outputs.issue_number }}
         REPOSITORY: ${{ github.repository }}
         ANALYSIS_PROMPT_FILE: ${{ steps.runtime.outputs.analysis_prompt_file }}
-        CODEX_OUTPUT_FILE: ${{ steps.runtime.outputs.codex_execution_log_file }}
-        CODEX_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.codex_output_artifact_file }}
+        MIMO_OUTPUT_FILE: ${{ steps.runtime.outputs.mimo_execution_log_file }}
+        MIMO_OUTPUT_ARTIFACT_FILE: ${{ steps.runtime.outputs.mimo_output_artifact_file }}
         ANSWER_FILE: ${{ inputs.answer-file }}
         FINAL_CONCLUSION_ARTIFACT_FILE: ${{ steps.runtime.outputs.final_conclusion_artifact_file }}
       run: |
@@ -505,8 +511,8 @@ runs:
         issue_number = os.environ["ISSUE_NUMBER"]
         repository = os.environ["REPOSITORY"]
         analysis_prompt_file = Path(os.environ["ANALYSIS_PROMPT_FILE"])
-        codex_output_file = Path(os.environ["CODEX_OUTPUT_FILE"])
-        codex_output_artifact_file = Path(os.environ["CODEX_OUTPUT_ARTIFACT_FILE"])
+        mimo_output_file = Path(os.environ["MIMO_OUTPUT_FILE"])
+        mimo_output_artifact_file = Path(os.environ["MIMO_OUTPUT_ARTIFACT_FILE"])
         answer_file = Path(os.environ["ANSWER_FILE"])
         final_conclusion_artifact_file = Path(os.environ["FINAL_CONCLUSION_ARTIFACT_FILE"])
         comment_url = (
@@ -533,9 +539,9 @@ runs:
             trimmed = encoded[: max_bytes - len(suffix_bytes)].decode("utf-8", errors="ignore")
             return f"{trimmed}{suffix}"
 
-        codex_output = read_or_placeholder(
-            codex_output_file,
-            f"Codex output file not found: {codex_output_file}",
+        mimo_output = read_or_placeholder(
+            mimo_output_file,
+            f"MiMo output file not found: {mimo_output_file}",
         )
         final_conclusion = read_or_placeholder(
             answer_file,
@@ -546,7 +552,7 @@ runs:
             f"Analysis prompt file not found: {analysis_prompt_file}",
         )
 
-        codex_output_artifact_file.write_text(codex_output, encoding="utf-8")
+        mimo_output_artifact_file.write_text(mimo_output, encoding="utf-8")
         final_conclusion_artifact_file.write_text(final_conclusion, encoding="utf-8")
 
         def write_multiline_output(name: str, value: str) -> None:
@@ -567,7 +573,7 @@ runs:
         )
         write_multiline_output(
             "codex-output",
-            truncate_for_output(codex_output, "codex-output"),
+            truncate_for_output(mimo_output, "codex-output"),
         )
         write_multiline_output(
             "final-conclusion",
@@ -575,12 +581,12 @@ runs:
         )
         PY
 
-    - name: Upload Codex output artifact
+    - name: Upload MiMo Code output artifact
       if: ${{ always() }}
       uses: actions/upload-artifact@v4
       with:
         name: codex-output-issue-${{ steps.issue_number.outputs.issue_number }}-comment-${{ steps.initial_comment.outputs.comment-id || 'none' }}
-        path: ${{ steps.runtime.outputs.codex_output_artifact_file }}
+        path: ${{ steps.runtime.outputs.mimo_output_artifact_file }}
         if-no-files-found: error
 
     - name: Upload final conclusion artifact
